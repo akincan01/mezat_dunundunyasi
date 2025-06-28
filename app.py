@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 from flask.cli import load_dotenv
 import openai
 import base64
+import os
+import re
+import json
 
 app = Flask(__name__)
 
-import os
 load_dotenv()  # 🔑 Load variables from .env
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -17,7 +19,7 @@ def extract_product_info():
         image_bytes = image_file.read()
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-        # Your Turkish prompt
+        # Turkish prompt for item extraction
         prompt = """
         Bu görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür:
         - Ürün Adı
@@ -45,13 +47,19 @@ def extract_product_info():
             max_tokens=500
         )
 
-        result = response.choices[0].message.content.strip()
-        return jsonify({"result": result})
+        raw = response.choices[0].message.content.strip()
+
+        # ✅ Clean the triple-backtick code formatting if present
+        cleaned = re.sub(r"^```json|^```|```$", "", raw, flags=re.MULTILINE).strip()
+
+        try:
+            data = json.loads(cleaned)
+            return jsonify(data)
+        except json.JSONDecodeError:
+            return jsonify({"error": "OpenAI response could not be parsed as JSON.", "raw": raw}), 500
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
-    
-
