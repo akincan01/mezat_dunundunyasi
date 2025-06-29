@@ -13,9 +13,21 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 @app.route("/extract", methods=["POST"])
 def extract_product_info():
     try:
-        image_bytes = request.get_data()
-        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        # 📥 Step 1: Get image in base64 format
+        if request.is_json:
+            # Request is from Google Apps Script
+            data = request.get_json()
+            data_url = data.get("image_base64", "")
+            if "," in data_url:
+                base64_image = data_url.split(",")[1]
+            else:
+                return jsonify({"error": "No valid base64 image found"}), 400
+        else:
+            # Request is raw binary (e.g. from Postman)
+            image_bytes = request.get_data()
+            base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
+        # 🧠 Prompt for GPT-4o (in Turkish)
         prompt = """
         Bu görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür:
         - Ürün Adı
@@ -37,6 +49,7 @@ def extract_product_info():
         Sadece geçerli bir JSON döndür.
         """
 
+        # 🧠 Call OpenAI API
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -49,21 +62,22 @@ def extract_product_info():
             max_tokens=800
         )
 
-        raw = response.choices[0].message.content.strip()
+        raw_response = response.choices[0].message.content.strip()
 
-        print("🔍 RAW GPT RESPONSE:")
-        print(raw)
+        # 🧹 Clean ```json code block
+        cleaned = re.sub(r"^```json|```$", "", raw_response, flags=re.MULTILINE).strip()
 
-        # Send both raw and cleaned text so we can debug
-        json_text = re.sub(r"^```json|```$", "", raw, flags=re.MULTILINE).strip()
+        # 🛠 Debugging log
+        print("📦 GPT response:", raw_response)
 
+        # ✅ Return both raw and cleaned JSON
         return jsonify({
-            "result": raw,
-            "cleaned": json_text
+            "result": raw_response,
+            "cleaned": cleaned
         })
 
     except Exception as e:
-        print("❌ Error parsing GPT response:", str(e))
+        print("❌ Error:", str(e))
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
