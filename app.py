@@ -19,18 +19,43 @@ def extract_product_info():
         image_bytes = image_file.read()
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-        # Turkish prompt for item extraction
         prompt = """
-        Bu görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür:
+        Bu görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve sadece Türkçe JSON formatında döndür:
+
         - Ürün Adı
         - Kategori (yalnızca şu seçeneklerden biri olmalı: Kitap, Obje, Efemera, Plak, Tablo, Mobilya)
-        - Ölçü veya boyut (mutlaka santimetre cinsinden belirt)
+        - Ölçü veya Boyut (mutlaka santimetre cinsinden belirt)
+        - Marka / Yayınevi / Plak Şirketi (eğer varsa)
+        - Model / Plak Baskı Kodu / Seri No (eğer varsa)
+        - Tarih / Dönem (fotoğraftan bulunabiliyorsa, yoksa tahmin et)
+        - Malzeme (obje ve mobilyalar için tahmin et)
+        - Adet (fotoğrafta birden fazla ürün varsa adedini belirt)
+        - Kondisyon (ürünün kondisyonunu 1’den 10’a kadar puanla. Belirtilmesi gereken arıza veya kusurları yanında belirt)
+        - Etiketler (örn: Elvis Presley plakası ise, #ElvisPresley, #Müzik gibi uygun etiketleri öner)
+        - Tarz / Tür (örn: Pop art, mid-century, art deco, gotik, rustik, rock, pop, caz, best of, karışık, sanat, fotoğraf, tarih, ansiklopedi, roman, şiir, spor vb.)
+        - Notlar (ürünün kullanıldığı roman, film, koleksiyon; ürünün markasının, modelinin ya da üretici firmanın dikkat çekici bir geçmişi varsa detaylıca ama kısa ve öz şekilde belirt. Maksimum 3-4 cümle.)
+        - Sosyal Medya / Arama Motoru Etiketleri (ürün sosyal medyada veya Google'da nasıl aranır? Anahtar kelimeleri aralarına virgül koyarak yaz)
+        - Kitap Adı / Albüm Adı / Tablo Adı (eğer ürün bir kitap, albüm veya tablo ise adını belirt)
+        - Yazar / Sanatçı Adı (varsa)
 
-        Sadece Türkçe JSON döndür. Örnek:
+        Yalnızca geçerli bir JSON nesnesi döndür. Örnek:
+
         {
-          "itemName": "Beyaz Tişört",
-          "category": "Kıyafet",
-          "size": "30x40 cm"
+        "itemName": "Elvis - The Moviestar",
+        "category": "Plak",
+        "size": "31x31 cm",
+        "brand": "RCA",
+        "model": "LPM-1234",
+        "period": "1970'ler",
+        "material": "Vinil",
+        "quantity": 1,
+        "condition": "8/10 - Kapakta hafif yıpranma",
+        "tags": ["#ElvisPresley", "#Müzik"],
+        "style": "Rock",
+        "notes": "Elvis Presley'in bu albümü, 1970'lerde sinema kariyerine yaptığı göndermelerle dikkat çeker. Albüm, plak koleksiyoncuları arasında nadir bulunan baskılardan biridir. RCA şirketi tarafından sınırlı sayıda üretilmiştir.",
+        "seoKeywords": "elvis plak, vintage rock albüm, elvis vinil, RCA plak",
+        "title": "The Moviestar",
+        "author": "Elvis Presley"
         }
         """
 
