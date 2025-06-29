@@ -13,68 +13,80 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 @app.route("/extract", methods=["POST"])
 def extract_product_info():
     try:
-        # 📥 Step 1: Get image in base64 format
-        if request.is_json:
-            # Request is from Google Apps Script
-            data = request.get_json()
-            data_url = data.get("image_base64", "")
-            if "," in data_url:
-                base64_image = data_url.split(",")[1]
-            else:
-                return jsonify({"error": "No valid base64 image found"}), 400
-        else:
-            # Request is raw binary (e.g. from Postman)
-            image_bytes = request.get_data()
-            base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        # ✅ Get image from form-data (key: 'image')
+        if 'image' not in request.files:
+            return jsonify({"error": "Görsel yüklenmedi. 'image' anahtarı eksik."}), 400
 
-        # 🧠 Prompt for GPT-4o (in Turkish)
+        image_file = request.files['image']
+        mime_type = image_file.mimetype
+        image_bytes = image_file.read()
+
+        # ✅ Supported formats
+        if mime_type not in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']:
+            return jsonify({"error": f"Desteklenmeyen görsel formatı: {mime_type}"}), 400
+
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        image_url = f"data:{mime_type};base64,{base64_image}"
+
+        # ✅ Prompt
         prompt = """
         Bu görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür:
         - Ürün Adı
         - Kategori (yalnızca şu seçeneklerden biri olmalı: Kitap, Obje, Efemera, Plak, Tablo, Mobilya)
-        - Ölçü veya boyut (santimetre cinsinden belirt)
+        - Ölçü veya boyut (mutlaka santimetre cinsinden belirt)
         - Marka / Yayınevi / Plak Şirketi (eğer varsa)
         - Model / Plak Baskı Kodu / Seri No (eğer varsa)
-        - Tarih / Dönem (fotoğraftan bulunabiliyorsa, yoksa tahmin et)
-        - Malzeme (tahmin et)
-        - Adet (birden fazlaysa belirt)
-        - Kondisyon (1-10, varsa kusur yaz)
-        - Etiket (örn: #ElvisPresley)
-        - Tarz / Tür (örn: rock, roman, art deco)
-        - Notlar (ürünün kısa hikayesi veya bilgisi)
-        - SEO Etiketleri (virgülle ayır)
-        - Kitap/Albüm/Tablo Adı
+        - Tarih / Dönem (fotograftan bulunabiliyorsa, yoksa tahmin et)
+        - Malzeme (objeler ve mobilyalar için tahmin et)
+        - Adet (fotoğrafta birden fazla ürün varsa adedini yaz)
+        - Kondisyon (Ürünün kondisyonunu 1’den 10’a kadar puanla. Kusurları varsa belirt)
+        - Etiket (örnek: #ElvisPresley #Müzik)
+        - Tarz / Tür (örnek: pop art, mid-century, roman, şiir, caz vs.)
+        - Notlar (ürünün tarihi, ilginç bilgi, kimin kullandığı vs. kısa ve değerli notlar)
+        - Sosyal Medya / Arama Motoru Etiketleri (virgülle ayır)
+        - Kitap Adı / Albüm Adı / Tablo Adı
         - Yazar / Sanatçı Adı
 
-        Sadece geçerli bir JSON döndür.
+        Sadece Türkçe, geçerli bir JSON formatı döndür. Örnek:
+        {
+          "itemName": "Elvis - The Moviestar",
+          "category": "Plak",
+          "size": "31x31 cm",
+          "brand": "RCA Records",
+          "model": "APL1-2566",
+          "period": "1977",
+          "material": "",
+          "quantity": "1",
+          "condition": "8/10 - Kapakta küçük yıpranma",
+          "tags": "#ElvisPresley, #Müzik",
+          "style": "Rock",
+          "notes": "Bu plak Elvis’in sinema kariyerine adanmış nadir baskılardan biridir.",
+          "seoKeywords": "elvis, plak, vintage, müzik, rock",
+          "title": "The Moviestar",
+          "author": "Elvis Presley"
+        }
         """
 
-        # 🧠 Call OpenAI API
+        # ✅ OpenAI call
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Bir ürün tanımlama asistanısın."},
                 {"role": "user", "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    {"type": "image_url", "image_url": {"url": image_url}}
                 ]}
             ],
-            max_tokens=800
+            max_tokens=1000
         )
 
-        raw_response = response.choices[0].message.content.strip()
+        raw = response.choices[0].message.content.strip()
 
-        # 🧹 Clean ```json code block
-        cleaned = re.sub(r"^```json|```$", "", raw_response, flags=re.MULTILINE).strip()
+        # 🧹 Remove markdown code blocks
+        cleaned = re.sub(r"^```json|```$", "", raw, flags=re.MULTILINE).strip()
 
-        # 🛠 Debugging log
-        print("📦 GPT response:", raw_response)
-
-        # ✅ Return both raw and cleaned JSON
-        return jsonify({
-            "result": raw_response,
-            "cleaned": cleaned
-        })
+        # ✅ Return actual JSON object
+        return jsonify(json.loads(cleaned))
 
     except Exception as e:
         print("❌ Error:", str(e))
