@@ -51,16 +51,16 @@ def extract_product_info():
 
         raw = response.choices[0].message.content.strip()
 
-        # 🛠️ Debug log
         print("🔍 RAW GPT RESPONSE:")
         print(raw)
 
-        # Clean markdown ```json
+        # Send both raw and cleaned text so we can debug
         json_text = re.sub(r"^```json|```$", "", raw, flags=re.MULTILINE).strip()
 
-        parsed = json.loads(json_text)
-
-        return jsonify(parsed)
+        return jsonify({
+            "result": raw,
+            "cleaned": json_text
+        })
 
     except Exception as e:
         print("❌ Error parsing GPT response:", str(e))
