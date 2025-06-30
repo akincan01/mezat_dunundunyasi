@@ -12,16 +12,16 @@ app = Flask(__name__)
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def resize_image_for_openai(image_bytes, max_size=1536, quality=85, max_file_size=2*1024*1024):
-    """Resize image only if it's too large for OpenAI API"""
+def resize_image_for_openai(image_bytes, max_size=800, quality=60, max_file_size=1024*1024):
+    """Resize image aggressively for OpenAI API - smaller size for multiple images"""
     try:
         # Open image to check dimensions
         image = Image.open(io.BytesIO(image_bytes))
         width, height = image.size
         max_dimension = max(width, height)
         
-        # Check if image needs resizing (by size OR dimensions)
-        needs_resize = (len(image_bytes) > max_file_size) or (max_dimension > max_size)
+        # Check if image needs resizing (ALWAYS resize for multiple images)
+        needs_resize = True  # Always resize for better OpenAI compatibility
         
         if not needs_resize:
             print(f"✅ Image OK: {len(image_bytes)} bytes, {width}x{height}px")
@@ -79,11 +79,13 @@ def extract_product_info():
 
         print(f"📸 Processing {len(uploaded_files)} images...")
 
-        # ✅ Process all images
+        # ✅ Process ALL images for AI analysis
+
+        # ✅ Process images for AI analysis (max 3)
         processed_images = []
         image_data_urls = []
         
-        for i, image_file in enumerate(uploaded_files):
+        for i, image_file in enumerate(uploaded_files):  # Process ALL images
             try:
                 print(f"Processing image {i+1}: {image_file.filename}")
                 
@@ -98,12 +100,12 @@ def extract_product_info():
                 if mime_type not in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']:
                     return jsonify({"error": f"Desteklenmeyen görsel formatı: {mime_type}"}), 400
 
-                # ✅ Resize for OpenAI if needed
+                # ✅ Resize for OpenAI (ALWAYS resize aggressively for multiple images)
                 processed_image_bytes, was_resized = resize_image_for_openai(
                     original_image_bytes, 
-                    max_size=1536,
-                    quality=85,
-                    max_file_size=2*1024*1024
+                    max_size=800,      # Much smaller
+                    quality=60,        # Lower quality
+                    max_file_size=512*1024  # 512KB limit
                 )
                 
                 print(f"Processed image size: {len(processed_image_bytes)} bytes")
@@ -204,10 +206,10 @@ def extract_product_info():
         # ✅ Parse the product data
         product_data = json.loads(cleaned)
         
-        # ✅ Add image count and filenames (without heavy base64 data in response)
+        # ✅ Add image count and filenames
         product_data["imageCount"] = len(processed_images)
         product_data["imageFilenames"] = [img["filename"] for img in processed_images]
-        product_data["images"] = processed_images  # Include full image data for Google Apps Script
+        product_data["images"] = processed_images  # Include ALL images
 
         return jsonify(product_data)
 
