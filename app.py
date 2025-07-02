@@ -15,18 +15,15 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
     """Resize image for OpenAI API - ultra high quality for text readability"""
     try:
-        # Open image to check dimensions
         image = Image.open(io.BytesIO(image_bytes))
         width, height = image.size
         
-        # Only resize if image is larger than max_size
         if max(width, height) <= max_size:
             print(f"✅ Image already optimal: {width}x{height}px, {len(image_bytes)} bytes")
             return image_bytes
         
         print(f"🔄 Resizing: {len(image_bytes)} bytes, {width}x{height}px -> max {max_size}px")
         
-        # Calculate new size maintaining aspect ratio
         if width > height:
             new_width = min(width, max_size)
             new_height = int((height * new_width) / width)
@@ -34,14 +31,11 @@ def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
             new_height = min(height, max_size)
             new_width = int((width * new_height) / height)
         
-        # Resize image with best quality algorithm
         resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # Convert to RGB if necessary (for JPEG)
         if resized_image.mode in ("RGBA", "P"):
             resized_image = resized_image.convert("RGB")
         
-        # Save with highest quality
         output = io.BytesIO()
         resized_image.save(output, format="JPEG", quality=quality, optimize=True)
         resized_bytes = output.getvalue()
@@ -56,30 +50,38 @@ def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
 @app.route("/extract", methods=["POST"])
 def extract_product_info():
     try:
-        # ✅ Handle both single and multiple images
+        # Handle multiple images from Google Apps Script
         uploaded_files = []
         
+        # Primary images key
         if 'images' in request.files:
-            uploaded_files = request.files.getlist('images')
-            print(f"✅ Found {len(uploaded_files)} images in 'images' key")
-        elif 'image' in request.files:
-            uploaded_files = [request.files['image']]
+            uploaded_files.extend(request.files.getlist('images'))
+            print(f"✅ Found {len(request.files.getlist('images'))} images in 'images' key")
+        
+        # Additional images from Google Apps Script optimization
+        for i in range(1, 10):  # Check for images_1, images_2, etc.
+            key = f'images_{i}'
+            if key in request.files:
+                uploaded_files.extend(request.files.getlist(key))
+                print(f"✅ Found images in '{key}' key")
+        
+        # Fallback for single image
+        if 'image' in request.files:
+            uploaded_files.append(request.files['image'])
             print("✅ Found 1 image in 'image' key")
-        else:
+        
+        if not uploaded_files:
             print("❌ No images found")
             return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
 
-        if not uploaded_files:
-            return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
-
         total_images = len(uploaded_files)
-        ai_images = min(2, total_images)  # Back to 2 images for better context
+        ai_images = min(3, total_images)  # Now using 3 images for AI analysis
         
         print(f"📸 Total images: {total_images}")
         print(f"🤖 Using {ai_images} images for AI analysis")
         print(f"💾 Saving {total_images} images for storage")
 
-        # ✅ Process first 2 images for AI analysis
+        # Process first 3 images for AI analysis
         image_data_urls = []
         
         for i in range(ai_images):
@@ -102,7 +104,7 @@ def extract_product_info():
             image_data_urls.append({"type": "image_url", "image_url": {"url": image_url}})
             print(f"✅ AI image {i+1} processed")
 
-        # ✅ Process ALL images for storage
+        # Process ALL images for storage
         all_images_for_storage = []
         
         for i, image_file in enumerate(uploaded_files):
@@ -122,53 +124,57 @@ def extract_product_info():
             })
             print(f"✅ Storage image {i+1} processed")
 
-        # ✅ Create detailed prompt
+        # Enhanced prompt for 3 images
         prompt = f"""
         Bu {ai_images} görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür.
         (Toplam {total_images} fotoğraf yüklendi, ilk {ai_images} tanesi analiz ediliyor)
 
-        Görsellerdeki tüm metinleri çok dikkatli oku ve en doğru bilgiyi çıkar:
+        3 FOTOĞRAFTAN ELDE EDİLEN TÜM BİLGİLERİ BİRLEŞTİR:
+        - Her fotoğraftaki tüm metinleri oku
+        - Farklı açılardan görünen detayları birleştir  
+        - En doğru ve eksiksiz bilgileri çıkar
 
-        - Ürün Adı
-        - Kategori (yalnızca şu seçeneklerden biri olmalı: Kitap, Obje, Efemera, Plak, Tablo, Mobilya)
-        - Ölçü veya boyut (mutlaka santimetre cinsinden belirt)
-        - Marka / Yayınevi / Plak Şirketi (eğer varsa)
-        - Model / Plak Baskı Kodu / Seri No (eğer varsa)
-        - Tarih / Dönem (fotograftan bulunabiliyorsa, yoksa tahmin et)
-        - Malzeme (objeler ve mobilyalar için tahmin et)
-        - Adet (fotoğrafta birden fazla ürün varsa adedini yaz)
-        - Kondisyon (Ürünün kondisyonunu 1'den 10'a kadar puanla. Kusurları varsa belirt)
-        - Etiket (örnek: #ElvisPresley #Müzik)
-        - Tarz / Tür (örnek: pop art, mid-century, roman, şiir, caz vs.)
-        - Notlar (ürünün tarihi, ilginç bilgi, kimin kullandığı vs. kısa ve değerli notlar)
-        - Sosyal Medya / Arama Motoru Etiketleri (virgülle ayır)
-        - Kitap Adı / Albüm Adı / Tablo Adı
-        - Yazar / Sanatçı Adı
+        Çıkaracağın bilgiler:
+        - Ürün Adı (en net görünen isim)
+        - Kategori (Kitap, Obje, Efemera, Plak, Tablo, Mobilya)
+        - Ölçü/boyut (santimetre cinsinden)
+        - Marka/Yayınevi/Şirket (fotoğraflarda görünen)
+        - Model/Seri/Baskı kodu
+        - Tarih/Dönem (yazıyorsa, yoksa tahmin et)
+        - Malzeme (ne yapıldığını tahmin et)
+        - Adet (kaç tane ürün var)
+        - Kondisyon (1-10 arası puan ve açıklama)
+        - Etiketler (hashtag formatında)
+        - Tarz/Tür (kategori, dönem, stil)
+        - Başlık/Albüm adı (tam isim)
+        - Yazar/Sanatçı (tam isim)
+        - Notlar (önemli detaylar, tarihçe, özellikler)
+        - SEO anahtar kelimeleri (virgülle ayır)
 
-        ÖNEMLI: Görsellerdeki yazıları çok dikkatli oku. Yayınevi adlarını, kitap başlıklarını tam olarak yazmaya özen göster.
-        Sadece Türkçe, geçerli bir JSON formatı döndür.
+        ÖNEMLI: 3 fotoğraftaki TÜM yazıları dikkatli oku. Çok detaylı ve eksiksiz analiz yap.
+        Sadece Türkçe, geçerli JSON formatı döndür.
 
         Örnek format:
         {{
-          "itemName": "Suç ve Ceza",
-          "category": "Kitap",
-          "size": "19x12 cm",
+          "itemName": "Suç ve Ceza - Fyodor Dostoyevski",
+          "category": "Kitap", 
+          "size": "19x12x2 cm",
           "brand": "Yapı Kredi Yayınları",
           "model": "YKY-2021-455",
           "period": "2021",
-          "material": "Kağıt",
+          "material": "Kağıt, karton kapak",
           "quantity": "1",
-          "condition": "9/10 - Çok iyi durumda",
-          "tags": "#klasik #edebiyat #dostoyevski",
+          "condition": "9/10 - Çok iyi durumda, hafif köşe kırıkları",
+          "tags": "#klasik #edebiyat #dostoyevski #roman #yky",
           "style": "Klasik Edebiyat",
-          "notes": "Dostoyevski'nin ünlü eseri, Türkçe çeviri",
-          "seoKeywords": "suç ve ceza, dostoyevski, klasik, roman, edebiyat",
+          "notes": "Dostoyevski'nin ünlü eseri. Türkçe çeviri. 3. baskı. Sayfa kenarları temiz.",
+          "seoKeywords": "suç ve ceza, dostoyevski, klasik roman, yky yayınları",
           "title": "Suç ve Ceza",
           "author": "Fyodor Dostoyevski"
         }}
         """
 
-        # ✅ Call OpenAI
+        # Call OpenAI with 3 images
         message_content = [{"type": "text", "text": prompt}]
         message_content.extend(image_data_urls)
 
@@ -177,25 +183,26 @@ def extract_product_info():
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Ürün tanımlama asistanısın. Metinleri dikkatli oku."},
+                {"role": "system", "content": "Sen bir ürün tanımlama uzmanısın. 3 fotoğrafı birlikte analiz edip en doğru bilgileri çıkarıyorsun."},
                 {"role": "user", "content": message_content}
             ],
-            max_tokens=1500
+            max_tokens=2000  # Increased for more detailed analysis
         )
 
         print("✅ OpenAI response received")
 
-        # ✅ Parse response
+        # Parse response
         raw = response.choices[0].message.content.strip()
         cleaned = re.sub(r"^```json|```$", "", raw, flags=re.MULTILINE).strip()
         product_data = json.loads(cleaned)
         
-        # ✅ Add image info
+        # Add image info
         product_data["totalImageCount"] = total_images
         product_data["aiAnalysisImageCount"] = ai_images
         product_data["imageFilenames"] = [img["filename"] for img in all_images_for_storage]
         product_data["images"] = all_images_for_storage
 
+        print(f"✅ Analysis complete: {ai_images} images analyzed, {total_images} total images processed")
         return jsonify(product_data)
 
     except json.JSONDecodeError as e:
