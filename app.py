@@ -55,7 +55,23 @@ def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
 @app.route("/extract", methods=["POST"])
 def extract_product_info():
     try:
-        # ✅ Handle both single and multiple images
+        # 🔍 DEBUG: Print all request information
+        print("🔍 DEBUG INFO:")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Request files keys: {list(request.files.keys())}")
+        print(f"Request form keys: {list(request.form.keys())}")
+        print(f"Request method: {request.method}")
+        print(f"Request headers: {dict(request.headers)}")
+        
+        # 🔍 DEBUG: Check what's in request.files
+        print(f"Request.files: {request.files}")
+        for key in request.files.keys():
+            files = request.files.getlist(key)
+            print(f"Key '{key}' has {len(files)} files")
+            for i, file in enumerate(files):
+                print(f"  File {i}: {file.filename}, {file.content_type}")
+
+        # ✅ Handle both single and multiple images with more debugging
         uploaded_files = []
         
         if 'images' in request.files:
@@ -65,14 +81,54 @@ def extract_product_info():
             uploaded_files = [request.files['image']]
             print("✅ Found 1 image in 'image' key")
         else:
-            print("❌ No images found")
-            return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
+            # 🔍 Try to find any file uploads regardless of key name
+            all_files = []
+            for key in request.files.keys():
+                files = request.files.getlist(key)
+                all_files.extend(files)
+            
+            if all_files:
+                uploaded_files = all_files
+                print(f"✅ Found {len(uploaded_files)} files in other keys: {list(request.files.keys())}")
+            else:
+                print("❌ No images found in any key")
+                return jsonify({
+                    "error": "Hiç görsel yüklenmedi.",
+                    "debug": {
+                        "content_type": request.content_type,
+                        "files_keys": list(request.files.keys()),
+                        "form_keys": list(request.form.keys()),
+                        "method": request.method
+                    }
+                }), 400
 
-        if not uploaded_files:
-            return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
+        if not uploaded_files or len(uploaded_files) == 0:
+            return jsonify({
+                "error": "Hiç görsel yüklenmedi.",
+                "debug": {
+                    "uploaded_files_length": len(uploaded_files) if uploaded_files else 0,
+                    "files_keys": list(request.files.keys())
+                }
+            }), 400
 
+        # Check if files are actually valid
+        valid_files = []
+        for file in uploaded_files:
+            if file and file.filename != '':
+                valid_files.append(file)
+        
+        if not valid_files:
+            return jsonify({
+                "error": "Geçerli görsel dosyası bulunamadı.",
+                "debug": {
+                    "total_files": len(uploaded_files),
+                    "valid_files": len(valid_files)
+                }
+            }), 400
+
+        uploaded_files = valid_files
         total_images = len(uploaded_files)
-        ai_images = min(3, total_images)  # Changed to 3 images for AI analysis
+        ai_images = min(3, total_images)
         
         print(f"📸 Total images: {total_images}")
         print(f"🤖 Using {ai_images} images for AI analysis")
@@ -86,13 +142,18 @@ def extract_product_info():
             print(f"Processing AI image {i+1}: {image_file.filename}")
             
             # Check format
-            mime_type = image_file.mimetype
+            mime_type = image_file.mimetype or image_file.content_type
+            print(f"Detected MIME type: {mime_type}")
+            
             if mime_type not in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']:
                 return jsonify({"error": f"Desteklenmeyen format: {mime_type}"}), 400
 
             # Read and resize for AI
             original_bytes = image_file.read()
             print(f"Original size: {len(original_bytes)} bytes")
+            
+            if len(original_bytes) == 0:
+                return jsonify({"error": f"Boş dosya: {image_file.filename}"}), 400
             
             resized_bytes = resize_image_for_openai(original_bytes, max_size=2000, quality=95)
             base64_resized = base64.b64encode(resized_bytes).decode("utf-8")
@@ -114,7 +175,7 @@ def extract_product_info():
             
             all_images_for_storage.append({
                 "filename": image_file.filename or f"image_{i+1}",
-                "mime_type": image_file.mimetype,
+                "mime_type": image_file.mimetype or image_file.content_type,
                 "size_bytes": len(original_bytes),
                 "base64": base64_original,
                 "used_for_ai": i < ai_images
@@ -202,7 +263,20 @@ def extract_product_info():
         return jsonify({"error": f"JSON formatı hatası: {str(e)}"}), 500
     except Exception as e:
         print(f"❌ Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
+
+# Add a simple health check endpoint
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Flask app is running on Render"})
+
+# Add CORS headers for better compatibility
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=True)
