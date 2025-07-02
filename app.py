@@ -6,8 +6,6 @@ import json
 import re
 from PIL import Image
 import io
-from datetime import datetime
-from werkzeug.exceptions import RequestEntityTooLarge
 
 app = Flask(__name__)
 
@@ -17,56 +15,36 @@ app.config['UPLOAD_FOLDER'] = '/tmp'
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def resize_image_for_openai(image_bytes, max_size=1600, quality=85, target_file_size=2*1024*1024):
-    """Resize image for OpenAI API with aggressive compression for large files"""
+def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
+    """Resize image for OpenAI API - ultra high quality for text readability"""
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        original_width, original_height = image.size
-        original_size = len(image_bytes)
+        width, height = image.size
         
-        print(f"🔍 Original: {original_width}x{original_height}px, {original_size:,} bytes")
-        
-        # If already small enough, return as-is
-        if original_size <= target_file_size and max(original_width, original_height) <= max_size:
-            print(f"✅ Image already optimal")
+        if max(width, height) <= max_size:
+            print(f"✅ Image already optimal: {width}x{height}px, {len(image_bytes)} bytes")
             return image_bytes
         
-        # Convert to RGB if needed
-        if image.mode in ("RGBA", "P"):
-            image = image.convert("RGB")
+        print(f"🔄 Resizing: {len(image_bytes)} bytes, {width}x{height}px -> max {max_size}px")
         
-        # Calculate new dimensions
-        if original_width > original_height:
-            new_width = min(original_width, max_size)
-            new_height = int((original_height * new_width) / original_width)
+        if width > height:
+            new_width = min(width, max_size)
+            new_height = int((height * new_width) / width)
         else:
-            new_height = min(original_height, max_size)
-            new_width = int((original_width * new_height) / original_height)
+            new_height = min(height, max_size)
+            new_width = int((width * new_height) / height)
         
-        # Resize image
         resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # Try different quality levels to hit target file size
-        for attempt_quality in [quality, 75, 60, 50, 40]:
-            output = io.BytesIO()
-            resized_image.save(output, format="JPEG", quality=attempt_quality, optimize=True)
-            compressed_bytes = output.getvalue()
-            compressed_size = len(compressed_bytes)
-            
-            print(f"🔄 Attempt: {new_width}x{new_height}px, quality={attempt_quality}%, size={compressed_size:,} bytes")
-            
-            # If we hit our target size, use this version
-            if compressed_size <= target_file_size:
-                print(f"✅ Success: {compressed_size:,} bytes (was {original_size:,} bytes)")
-                return compressed_bytes
-            
-            # If this is our last attempt, use it anyway
-            if attempt_quality == 40:
-                print(f"⚠️ Using lowest quality: {compressed_size:,} bytes")
-                return compressed_bytes
+        if resized_image.mode in ("RGBA", "P"):
+            resized_image = resized_image.convert("RGB")
         
-        # Fallback - return the compressed version even if large
-        return compressed_bytes
+        output = io.BytesIO()
+        resized_image.save(output, format="JPEG", quality=quality, optimize=True)
+        resized_bytes = output.getvalue()
+        
+        print(f"✅ Resized to: {len(resized_bytes)} bytes, {new_width}x{new_height}px")
+        return resized_bytes
         
     except Exception as e:
         print(f"❌ Error resizing image: {e}")
@@ -74,43 +52,14 @@ def resize_image_for_openai(image_bytes, max_size=1600, quality=85, target_file_
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({
-        "status": "Flask app is running - Hybrid Solution Ready", 
-        "endpoints": ["/extract", "/extract-hybrid", "/health"],
-        "version": "2.0 - Hybrid Support"
-    })
+    return jsonify({"status": "Flask app is running", "endpoints": ["/extract", "/health"]})
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({
-        "status": "healthy", 
-        "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
-        "max_file_size": "50MB",
-        "supported_formats": ["jpeg", "jpg", "png", "webp", "gif"]
-    })
-
-@app.errorhandler(RequestEntityTooLarge)
-def handle_large_file(e):
-    return jsonify({
-        "error": "File too large",
-        "message": "Please use images smaller than 50MB. For best results, compress images to under 5MB.",
-        "max_size": "50MB",
-        "suggestion": "Use client-side compression or resize images before uploading"
-    }), 413
+    return jsonify({"status": "healthy", "openai_key_set": bool(os.getenv("OPENAI_API_KEY"))})
 
 @app.route("/extract", methods=["POST", "OPTIONS"])
 def extract_product_info():
-    """Original endpoint - maintains backward compatibility"""
-    return process_images(return_format="original")
-
-@app.route("/extract-hybrid", methods=["POST", "OPTIONS"])
-def extract_product_info_hybrid():
-    """New hybrid endpoint - optimized for web app integration"""
-    return process_images(return_format="hybrid")
-
-def process_images(return_format="original"):
-    """Main image processing function - supports both original and hybrid formats"""
-    
     # Handle CORS preflight
     if request.method == "OPTIONS":
         response = jsonify({"status": "ok"})
@@ -123,7 +72,6 @@ def process_images(return_format="original"):
         print(f"🔍 Request method: {request.method}")
         print(f"🔍 Content-Type: {request.content_type}")
         print(f"🔍 Content-Length: {request.content_length}")
-        print(f"🔍 Return format: {return_format}")
         print(f"🔍 Files keys: {list(request.files.keys())}")
         print(f"🔍 Form keys: {list(request.form.keys())}")
         
@@ -276,9 +224,11 @@ def process_images(return_format="original"):
         - Yazar / Sanatçı Adı
 
         ÖNEMLI: Görsellerdeki yazıları çok dikkatli oku. Yayınevi adlarını, kitap başlıklarını tam olarak yazmaya özen göster.
-        Sadece Türkçe, geçerli bir JSON formatı döndür.
+        Sadece Türkçe içerikli ama İngilizce anahtarlı JSON formatı döndür. Anahtarlar tam olarak aşağıdaki örnekteki gibi olmalı.
 
-        Örnek format:
+        ZORUNLU: Döndürülen JSON'daki anahtarlar (keys) mutlaka İngilizce olmalı, değerler (values) Türkçe olabilir.
+
+        Örnek format - AYNI ANAHTARLARI KULLAN:
         {{
           "itemName": "Suç ve Ceza",
           "category": "Kitap",
@@ -325,39 +275,9 @@ def process_images(return_format="original"):
         product_data["aiAnalysisImageCount"] = len(image_data_urls)
         product_data["imageFilenames"] = [img["filename"] for img in all_images_for_storage]
         product_data["images"] = all_images_for_storage
-        
-        # Add processing metadata
-        product_data["processingInfo"] = {
-            "timestamp": datetime.now().isoformat(),
-            "api_version": "2.0-hybrid",
-            "total_images": total_images,
-            "ai_processed_images": len(image_data_urls),
-            "return_format": return_format
-        }
 
-        # Return different formats based on endpoint
-        if return_format == "hybrid":
-            # Format for hybrid web app
-            return jsonify({
-                "success": True,
-                "data": product_data,
-                "metadata": {
-                    "total_images": total_images,
-                    "processed_images": len(image_data_urls),
-                    "api_version": "2.0-hybrid"
-                }
-            })
-        else:
-            # Original format for backward compatibility
-            return jsonify(product_data)
+        return jsonify(product_data)
 
-    except RequestEntityTooLarge:
-        return jsonify({
-            "error": "File too large",
-            "message": "Please use images smaller than 50MB. Consider using client-side compression.",
-            "max_size": "50MB",
-            "suggestion": "Compress images to under 5MB for best performance"
-        }), 413
     except json.JSONDecodeError as e:
         print(f"❌ JSON Error: {e}")
         return jsonify({"error": f"JSON formatı hatası: {str(e)}"}), 500
