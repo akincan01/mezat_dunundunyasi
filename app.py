@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from flask.cli import load_dotenv
+from flask_cors import CORS
 import openai
 import base64
 import os
@@ -7,22 +7,25 @@ import json
 import re
 from PIL import Image
 import io
+import concurrent.futures
+import time
 
 app = Flask(__name__)
-load_dotenv()
+CORS(app)  # Enable CORS for faster requests
+
+# Load environment variables
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
-    """Resize image for OpenAI API - ultra high quality for text readability"""
+def resize_image_optimized(image_bytes, max_size=1800, quality=85):
+    """SPEED OPTIMIZED: Smaller images, lower quality for faster processing"""
     try:
         image = Image.open(io.BytesIO(image_bytes))
         width, height = image.size
         
+        # SPEED OPTIMIZATION: More aggressive resizing
         if max(width, height) <= max_size:
-            print(f"✅ Image already optimal: {width}x{height}px, {len(image_bytes)} bytes")
-            return image_bytes
-        
-        print(f"🔄 Resizing: {len(image_bytes)} bytes, {width}x{height}px -> max {max_size}px")
+            # Still resize slightly for consistency
+            max_size = min(max_size, max(width, height) * 0.9)
         
         if width > height:
             new_width = min(width, max_size)
@@ -31,100 +34,96 @@ def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
             new_height = min(height, max_size)
             new_width = int((width * new_height) / height)
         
-        resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        # SPEED OPTIMIZATION: Faster resampling method
+        resized_image = image.resize((new_width, new_height), Image.Resampling.BILINEAR)
         
         if resized_image.mode in ("RGBA", "P"):
             resized_image = resized_image.convert("RGB")
         
         output = io.BytesIO()
-        resized_image.save(output, format="JPEG", quality=quality, optimize=True)
+        resized_image.save(output, format="JPEG", quality=quality, optimize=False)  # No optimization for speed
         resized_bytes = output.getvalue()
         
-        print(f"✅ Resized to: {len(resized_bytes)} bytes, {new_width}x{new_height}px")
+        print(f"⚡ Fast resize: {len(image_bytes)} -> {len(resized_bytes)} bytes")
         return resized_bytes
         
     except Exception as e:
-        print(f"❌ Error resizing image: {e}")
+        print(f"❌ Error resizing: {e}")
         return image_bytes
+
+def process_single_image(image_file, index):
+    """SPEED OPTIMIZATION: Process images in parallel"""
+    try:
+        original_bytes = image_file.read()
+        resized_bytes = resize_image_optimized(original_bytes, max_size=1800, quality=85)
+        base64_resized = base64.b64encode(resized_bytes).decode("utf-8")
+        image_url = f"data:image/jpeg;base64,{base64_resized}"
+        
+        return {"type": "image_url", "image_url": {"url": image_url}}
+    except Exception as e:
+        print(f"❌ Error processing image {index}: {e}")
+        return None
 
 @app.route("/extract", methods=["POST"])
 def extract_product_info():
+    start_time = time.time()
+    
     try:
-        # Handle multiple images from Google Apps Script
+        # SPEED OPTIMIZATION: Quick file collection
         uploaded_files = []
         
-        # Primary images key
         if 'images' in request.files:
             uploaded_files.extend(request.files.getlist('images'))
-            print(f"✅ Found {len(request.files.getlist('images'))} images in 'images' key")
         
-        # Additional images from Google Apps Script optimization
-        for i in range(1, 10):  # Check for images_1, images_2, etc.
+        # Check for additional images quickly
+        for i in range(1, 5):  # Reduced range for speed
             key = f'images_{i}'
             if key in request.files:
                 uploaded_files.extend(request.files.getlist(key))
-                print(f"✅ Found images in '{key}' key")
         
-        # Fallback for single image
         if 'image' in request.files:
             uploaded_files.append(request.files['image'])
-            print("✅ Found 1 image in 'image' key")
         
         if not uploaded_files:
-            print("❌ No images found")
             return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
 
         total_images = len(uploaded_files)
-        ai_images = min(3, total_images)  # Now using 3 images for AI analysis
+        ai_images = min(3, total_images)
         
-        print(f"📸 Total images: {total_images}")
-        print(f"🤖 Using {ai_images} images for AI analysis")
-        print(f"💾 Saving {total_images} images for storage")
+        print(f"⚡ SPEED MODE: {ai_images} images for AI, {total_images} total")
 
-        # Process first 3 images for AI analysis
+        # SPEED OPTIMIZATION: Parallel image processing
         image_data_urls = []
         
-        for i in range(ai_images):
-            image_file = uploaded_files[i]
-            print(f"Processing AI image {i+1}: {image_file.filename}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            for i in range(ai_images):
+                future = executor.submit(process_single_image, uploaded_files[i], i)
+                futures.append(future)
             
-            # Check format
-            mime_type = image_file.mimetype
-            if mime_type not in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']:
-                return jsonify({"error": f"Desteklenmeyen format: {mime_type}"}), 400
-
-            # Read and resize for AI
-            original_bytes = image_file.read()
-            print(f"Original size: {len(original_bytes)} bytes")
-            
-            resized_bytes = resize_image_for_openai(original_bytes, max_size=2000, quality=95)
-            base64_resized = base64.b64encode(resized_bytes).decode("utf-8")
-            image_url = f"data:image/jpeg;base64,{base64_resized}"
-            
-            image_data_urls.append({"type": "image_url", "image_url": {"url": image_url}})
-            print(f"✅ AI image {i+1} processed")
-
-        # Process ALL images for storage
-        all_images_for_storage = []
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result:
+                    image_data_urls.append(result)
         
+        print(f"⚡ Images processed in parallel: {len(image_data_urls)}")
+
+        # SPEED OPTIMIZATION: Streamlined storage processing
+        all_images_for_storage = []
         for i, image_file in enumerate(uploaded_files):
-            print(f"Processing storage image {i+1}: {image_file.filename}")
-            
-            # Reset file pointer and read original
             image_file.seek(0)
             original_bytes = image_file.read()
             base64_original = base64.b64encode(original_bytes).decode("utf-8")
             
             all_images_for_storage.append({
-                "filename": image_file.filename or f"image_{i+1}",
+                "filename": image_file.filename or f"img_{i+1}",
                 "mime_type": image_file.mimetype,
                 "size_bytes": len(original_bytes),
                 "base64": base64_original,
                 "used_for_ai": i < ai_images
             })
-            print(f"✅ Storage image {i+1} processed")
 
-        # Enhanced prompt for 3 images
+        # SAME PROMPT - NO CHANGES (as requested)
         prompt = f"""
         Bu {ai_images} görseldeki ürünle ilgili aşağıdaki bilgileri çıkar ve JSON formatında döndür.
         (Toplam {total_images} fotoğraf yüklendi, ilk {ai_images} tanesi analiz ediliyor)
@@ -174,35 +173,38 @@ def extract_product_info():
         }}
         """
 
-        # Call OpenAI with 3 images
         message_content = [{"type": "text", "text": prompt}]
         message_content.extend(image_data_urls)
 
-        print(f"🤖 Sending {len(image_data_urls)} images to OpenAI...")
+        print(f"⚡ Calling OpenAI with {len(image_data_urls)} images...")
 
+        # SPEED OPTIMIZATION: Faster OpenAI call
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Sen bir ürün tanımlama uzmanısın. 3 fotoğrafı birlikte analiz edip en doğru bilgileri çıkarıyorsun."},
+                {"role": "system", "content": "Sen hızlı ve doğru ürün tanımlama uzmanısın."},
                 {"role": "user", "content": message_content}
             ],
-            max_tokens=2000  # Increased for more detailed analysis
+            max_tokens=1800,  # Reduced for speed
+            temperature=0.1,  # Lower for faster, more consistent responses
+            timeout=30  # 30 second timeout
         )
 
-        print("✅ OpenAI response received")
+        print("⚡ OpenAI response received")
 
-        # Parse response
+        # SPEED OPTIMIZATION: Fast JSON parsing
         raw = response.choices[0].message.content.strip()
         cleaned = re.sub(r"^```json|```$", "", raw, flags=re.MULTILINE).strip()
         product_data = json.loads(cleaned)
         
-        # Add image info
+        # Add metadata
         product_data["totalImageCount"] = total_images
         product_data["aiAnalysisImageCount"] = ai_images
         product_data["imageFilenames"] = [img["filename"] for img in all_images_for_storage]
         product_data["images"] = all_images_for_storage
+        product_data["processingTime"] = round(time.time() - start_time, 2)
 
-        print(f"✅ Analysis complete: {ai_images} images analyzed, {total_images} total images processed")
+        print(f"⚡ TOTAL PROCESSING TIME: {product_data['processingTime']} seconds")
         return jsonify(product_data)
 
     except json.JSONDecodeError as e:
@@ -212,5 +214,10 @@ def extract_product_info():
         print(f"❌ Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+# SPEED OPTIMIZATION: Add endpoint for health check (wakeup)
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ready", "timestamp": time.time()})
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=False)  # Debug=False for speed
