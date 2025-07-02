@@ -17,36 +17,56 @@ app.config['UPLOAD_FOLDER'] = '/tmp'
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
-    """Resize image for OpenAI API - ultra high quality for text readability"""
+def resize_image_for_openai(image_bytes, max_size=1600, quality=85, target_file_size=2*1024*1024):
+    """Resize image for OpenAI API with aggressive compression for large files"""
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        width, height = image.size
+        original_width, original_height = image.size
+        original_size = len(image_bytes)
         
-        if max(width, height) <= max_size:
-            print(f"✅ Image already optimal: {width}x{height}px, {len(image_bytes)} bytes")
+        print(f"🔍 Original: {original_width}x{original_height}px, {original_size:,} bytes")
+        
+        # If already small enough, return as-is
+        if original_size <= target_file_size and max(original_width, original_height) <= max_size:
+            print(f"✅ Image already optimal")
             return image_bytes
         
-        print(f"🔄 Resizing: {len(image_bytes)} bytes, {width}x{height}px -> max {max_size}px")
+        # Convert to RGB if needed
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
         
-        if width > height:
-            new_width = min(width, max_size)
-            new_height = int((height * new_width) / width)
+        # Calculate new dimensions
+        if original_width > original_height:
+            new_width = min(original_width, max_size)
+            new_height = int((original_height * new_width) / original_width)
         else:
-            new_height = min(height, max_size)
-            new_width = int((width * new_height) / height)
+            new_height = min(original_height, max_size)
+            new_width = int((original_width * new_height) / original_height)
         
+        # Resize image
         resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        if resized_image.mode in ("RGBA", "P"):
-            resized_image = resized_image.convert("RGB")
+        # Try different quality levels to hit target file size
+        for attempt_quality in [quality, 75, 60, 50, 40]:
+            output = io.BytesIO()
+            resized_image.save(output, format="JPEG", quality=attempt_quality, optimize=True)
+            compressed_bytes = output.getvalue()
+            compressed_size = len(compressed_bytes)
+            
+            print(f"🔄 Attempt: {new_width}x{new_height}px, quality={attempt_quality}%, size={compressed_size:,} bytes")
+            
+            # If we hit our target size, use this version
+            if compressed_size <= target_file_size:
+                print(f"✅ Success: {compressed_size:,} bytes (was {original_size:,} bytes)")
+                return compressed_bytes
+            
+            # If this is our last attempt, use it anyway
+            if attempt_quality == 40:
+                print(f"⚠️ Using lowest quality: {compressed_size:,} bytes")
+                return compressed_bytes
         
-        output = io.BytesIO()
-        resized_image.save(output, format="JPEG", quality=quality, optimize=True)
-        resized_bytes = output.getvalue()
-        
-        print(f"✅ Resized to: {len(resized_bytes)} bytes, {new_width}x{new_height}px")
-        return resized_bytes
+        # Fallback - return the compressed version even if large
+        return compressed_bytes
         
     except Exception as e:
         print(f"❌ Error resizing image: {e}")
