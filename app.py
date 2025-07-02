@@ -6,6 +6,8 @@ import json
 import re
 from PIL import Image
 import io
+from datetime import datetime
+from werkzeug.exceptions import RequestEntityTooLarge
 
 app = Flask(__name__)
 
@@ -52,14 +54,43 @@ def resize_image_for_openai(image_bytes, max_size=2000, quality=95):
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "Flask app is running", "endpoints": ["/extract", "/health"]})
+    return jsonify({
+        "status": "Flask app is running - Hybrid Solution Ready", 
+        "endpoints": ["/extract", "/extract-hybrid", "/health"],
+        "version": "2.0 - Hybrid Support"
+    })
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy", "openai_key_set": bool(os.getenv("OPENAI_API_KEY"))})
+    return jsonify({
+        "status": "healthy", 
+        "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
+        "max_file_size": "50MB",
+        "supported_formats": ["jpeg", "jpg", "png", "webp", "gif"]
+    })
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_file(e):
+    return jsonify({
+        "error": "File too large",
+        "message": "Please use images smaller than 50MB. For best results, compress images to under 5MB.",
+        "max_size": "50MB",
+        "suggestion": "Use client-side compression or resize images before uploading"
+    }), 413
 
 @app.route("/extract", methods=["POST", "OPTIONS"])
 def extract_product_info():
+    """Original endpoint - maintains backward compatibility"""
+    return process_images(return_format="original")
+
+@app.route("/extract-hybrid", methods=["POST", "OPTIONS"])
+def extract_product_info_hybrid():
+    """New hybrid endpoint - optimized for web app integration"""
+    return process_images(return_format="hybrid")
+
+def process_images(return_format="original"):
+    """Main image processing function - supports both original and hybrid formats"""
+    
     # Handle CORS preflight
     if request.method == "OPTIONS":
         response = jsonify({"status": "ok"})
@@ -72,6 +103,7 @@ def extract_product_info():
         print(f"🔍 Request method: {request.method}")
         print(f"🔍 Content-Type: {request.content_type}")
         print(f"🔍 Content-Length: {request.content_length}")
+        print(f"🔍 Return format: {return_format}")
         print(f"🔍 Files keys: {list(request.files.keys())}")
         print(f"🔍 Form keys: {list(request.form.keys())}")
         
@@ -273,9 +305,39 @@ def extract_product_info():
         product_data["aiAnalysisImageCount"] = len(image_data_urls)
         product_data["imageFilenames"] = [img["filename"] for img in all_images_for_storage]
         product_data["images"] = all_images_for_storage
+        
+        # Add processing metadata
+        product_data["processingInfo"] = {
+            "timestamp": datetime.now().isoformat(),
+            "api_version": "2.0-hybrid",
+            "total_images": total_images,
+            "ai_processed_images": len(image_data_urls),
+            "return_format": return_format
+        }
 
-        return jsonify(product_data)
+        # Return different formats based on endpoint
+        if return_format == "hybrid":
+            # Format for hybrid web app
+            return jsonify({
+                "success": True,
+                "data": product_data,
+                "metadata": {
+                    "total_images": total_images,
+                    "processed_images": len(image_data_urls),
+                    "api_version": "2.0-hybrid"
+                }
+            })
+        else:
+            # Original format for backward compatibility
+            return jsonify(product_data)
 
+    except RequestEntityTooLarge:
+        return jsonify({
+            "error": "File too large",
+            "message": "Please use images smaller than 50MB. Consider using client-side compression.",
+            "max_size": "50MB",
+            "suggestion": "Compress images to under 5MB for best performance"
+        }), 413
     except json.JSONDecodeError as e:
         print(f"❌ JSON Error: {e}")
         return jsonify({"error": f"JSON formatı hatası: {str(e)}"}), 500
