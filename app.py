@@ -72,13 +72,13 @@ def extract_product_info():
             return jsonify({"error": "Hiç görsel yüklenmedi."}), 400
 
         total_images = len(uploaded_files)
-        ai_images = min(2, total_images)  # Back to 2 images for stability
+        ai_images = min(3, total_images)  # Changed to 3 images for AI analysis
         
         print(f"📸 Total images: {total_images}")
         print(f"🤖 Using {ai_images} images for AI analysis")
         print(f"💾 Saving {total_images} images for storage")
 
-        # ✅ Process first 2 images for AI analysis
+        # ✅ Process first 3 images for AI analysis
         image_data_urls = []
         
         for i in range(ai_images):
